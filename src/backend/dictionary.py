@@ -1,12 +1,21 @@
 import os
 import numpy as np
 import pandas as pd
+from enum import Enum
 
 from src.backend.utils import get_dump_path, softmax
 
 
+class Language(Enum):
+    en = 'en'
+    ru = 'ru'
+
+
 class Dictionary:
-    def __init__(self, translated_filename: str, random_state: int = None) -> None:
+    def __init__(self,
+                 translated_filename: str,
+                 random_state: int = None,
+                 load_if_possible: bool = True):
         translated = pd.read_csv(translated_filename)
         self.en_words = translated['lemma'].to_numpy()
         self.ru_words = translated['translation'].to_numpy()
@@ -15,22 +24,17 @@ class Dictionary:
         self.en_scores_save_path = os.path.join(get_dump_path(), 'en_scores.npy')
         self.ru_scores_save_path = os.path.join(get_dump_path(), 'ru_scores.npy')
 
-        self._init_scores('en')
-        self._init_scores('ru')
+        self._init_scores('en', load_if_possible)
+        self._init_scores('ru', load_if_possible)
 
         if random_state is not None:
             np.random.seed(random_state)
 
-    def _init_scores(self, language: str = 'en'):
-        if language == 'en':
-            path = self.en_scores_save_path
-        elif language == 'ru':
-            path = self.ru_scores_save_path
-        else:
-            raise ValueError(f"`language` parameter must be in ['en', ru'], got {language}")
+    def _init_scores(self, language: Language, load_if_possible: bool):
+        path = getattr(self, f'{language.value}_scores_save_path')
 
-        if os.path.exists(path):
-            setattr(self, f'{language}_scores', np.load(path))
+        if os.path.exists(path) and load_if_possible:
+            setattr(self, f'{language.value}_scores', np.load(path))
         else:
             scores = np.zeros(self.freqs.shape[0])
             max_score = 9
@@ -43,16 +47,28 @@ class Dictionary:
                 score = max_score - i
                 scores[start_idx: end_idx] = score
 
-            setattr(self, f'{language}_scores', scores)
+            setattr(self, f'{language.value}_scores', scores)
+            self._save_scores(scores, language)
 
-    def get_random_word(self, language: str = 'en'):
-        if language not in ['en', 'ru']:
-            raise ValueError(f"`language` parameter must be in ['en', ru'], got {language}")
+    def _save_scores(self, scores, language: Language):
+        path = getattr(self, f'{language.value}_scores_save_path')
+        np.save(path, scores)
 
-        scores = getattr(self, f'{language}_scores')
+    def get_random_word(self, language: Language):
+        scores = getattr(self, f'{language.value}_scores')
         probas = softmax(scores)
         indices = np.arange(scores.shape[0])
 
         sample_idx = np.random.choice(indices, 1, p=probas)
 
-        return self.en_words[sample_idx], self.ru_words[sample_idx]
+        return self.en_words[sample_idx], self.ru_words[sample_idx], sample_idx
+
+    def modify_score(self, idx: int, increment: int, language: Language):
+        scores = getattr(self, f'{language.value}_scores')
+
+        new_score = scores[idx] + increment
+        if new_score < 0 or new_score > 9:
+            raise ValueError('The increment is too large')
+        scores[idx] = new_score
+
+        self._save_scores(scores, language)
