@@ -2,3 +2,5 @@ numpy
 pandas
 googletrans==3.1.0a0
 tqdm
+kivy[base]
+kivymd
